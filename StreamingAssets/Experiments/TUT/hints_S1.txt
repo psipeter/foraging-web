@@ -1,0 +1,62 @@
+# Tutorial hints. A block is a trigger line, then the popup: title, text, and a "Press [Enter] to ..." prompt. Each block is shown once.
+#
+#     @bout 1
+#     Your first harvest
+#     You earned {points} points.
+#
+#     Press [Enter] to continue
+#
+# Triggers (Assets/Scripts/UI/TutorialHints.cs; an unknown one is an error): bout n (a harvest that took fruit ends), patch_switch n (the nth qualifying patch leaving, as the selections count them),
+# selection_start n, selection_end n, time_left s (the first moment s foraging seconds or fewer are left; the clock pulses yellow while the hint is up). A waiting foraging hint holds back a selection hint behind it; after a resume, counts carry on from the highest hint of a trigger already shown.
+# {points} is what the harvest that fired it earned.
+
+@bout 1
+Harvesting
+
+Harvesting this bush earned {points} points
+You can **stop** harvesting a bush anytime, or **return** to a bush later
+
+Try harvesting a different bush
+
+Press [Enter] to continue
+
+@bout 2
+Features
+
+Harvesting this bush earned {points} points
+A bush's **shape** and/or **color** determine how many points you get
+
+Try harvesting a few more bushes, then move to a new area
+
+Press [Enter] to continue
+
+@selection_start 1
+Selection
+
+**Select** the most valuable bushes based on what you learned
+
+Press [Enter] to continue
+
+@selection_end 1
+Selection
+
+You earn up to **100 points** for selecting better bushes
+These **hidden** points are added at the end of the session
+
+Press [Enter] to continue
+
+@time_left 90
+Scoring
+
+You have a limited **time** in each session
+Learn and harvest **efficiently** to earn more **points**
+
+Press [Enter] to continue
+
+@time_left 30
+Pausing
+
+You can **pause** the game at any time
+The timer stops while you are paused
+
+Press [Escape] to pause

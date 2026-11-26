@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Foraging task</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="stylesheet" href="TemplateData/style.css">
+  <script src="TemplateData/profiler.js"></script>
+  <!-- patched by scripts/patch_webgl_page.py -->
+  <script>
+    // Chrome rejects a pointer-lock request made right after the participant left the lock (Escape) with a SecurityError. The game
+    // just asks again on the next click; Unity would show this harmless rejection as an "error occurred" pop-up, so it is swallowed
+    // here, before Unity's own handler is registered.
+    window.addEventListener('unhandledrejection', function (e) {
+      var m = e.reason && (e.reason.message || String(e.reason));
+      if (m && /pointer ?lock/i.test(m)) { e.preventDefault(); e.stopImmediatePropagation(); }
+    });
+  </script>
+  <script>
+// Hardware-acceleration check for the WebGL page (embedded into the build's index.html by scripts/patch_webgl_page.py; also loaded by
+// scripts/test_webgl_gpu_check.mjs, which runs it with stubbed browsers). It runs before Unity's loader is added to the page: a browser that
+// renders WebGL in software (hardware acceleration off, or a blocklisted GPU) makes the game crawl and fail to connect, so the participant gets
+// instructions to turn it on and the game is not loaded until the check passes (docs/DECISIONS.md, "WebGL: hardware acceleration is required").
+(function (root) {
+  'use strict';
+
+  var SOFTWARE = /swiftshader|llvmpipe|softpipe|software|microsoft basic render|mesa offscreen|\bgdi generic\b/i;
+
+  // The browser family, from the user agent (order matters: Edge, Opera and Chromium forks also say "Chrome", Chrome on iOS says "Safari").
+  function browserOf(ua, hasBrave) {
+    if (hasBrave) return 'brave';
+    if (/Edg(e|A|iOS)?\//.test(ua)) return 'edge';
+    if (/OPR\/|Opera/.test(ua)) return 'opera';
+    if (/Firefox\/|FxiOS\//.test(ua)) return 'firefox';
+    if (/Chrome\/|Chromium\/|CriOS\//.test(ua)) return 'chrome';
+    if (/Safari\//.test(ua) && /Version\//.test(ua)) return 'safari';
+    return 'unknown';
+  }
+
+  // {ok: true, renderer} or {ok: false, reason: 'none' | 'software', renderer}. `doc` is a document-like object (createElement('canvas')).
+  function check(doc) {
+    var canvas = doc.createElement('canvas');
+    var gl = null;
+    try {
+      // failIfMajorPerformanceCaveat: no context at all when the browser would fall back to software rendering.
+      gl = canvas.getContext('webgl2', { failIfMajorPerformanceCaveat: true });
+    } catch (e) { gl = null; }
+    if (!gl) {
+      var soft = null;      // is WebGL2 there at all, only in software? (decides the wording)
+      try { soft = canvas.getContext('webgl2') || doc.createElement('canvas').getContext('webgl2'); } catch (e) { soft = null; }
+      return { ok: false, reason: soft ? 'software' : 'none', renderer: rendererOf(soft) };
+    }
+    var renderer = rendererOf(gl);
+    if (SOFTWARE.test(renderer)) return { ok: false, reason: 'software', renderer: renderer };
+    return { ok: true, renderer: renderer };
+  }
+
+  function rendererOf(gl) {
+    if (!gl) return '';
+    try {
+      var info = gl.getExtension('WEBGL_debug_renderer_info');
+      return String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+    } catch (e) { return ''; }
+  }
+
+  // The steps for a browser: a title and an ordered list.
+  var STEPS = {
+    chrome: ['Chrome', ['Open Chrome’s menu (⋮) → Settings → System.',
+      'Turn on “Use graphics acceleration when available”.', 'Click “Relaunch” (close every Chrome window and open it again).']],
+    edge: ['Microsoft Edge', ['Open Edge’s menu (…) → Settings → System and performance.',
+      'Turn on “Use graphics acceleration when available”.', 'Click “Restart” (close every Edge window and open it again).']],
+    brave: ['Brave', ['Open Brave’s menu → Settings → System.',
+      'Turn on “Use graphics acceleration when available”.', 'Click “Relaunch” (close every Brave window and open it again).']],
+    opera: ['Opera', ['Open Opera’s settings (Alt+P) → Advanced → Browser → System.',
+      'Turn on “Use hardware acceleration when available”.', 'Restart Opera (close every Opera window and open it again).']],
+    firefox: ['Firefox', ['Open Firefox’s menu (☰) → Settings → General, and scroll to Performance.',
+      'Untick “Use recommended performance settings”.', 'Tick “Use hardware acceleration when available”.',
+      'Restart Firefox (close every Firefox window and open it again).']],
+    safari: ['Safari', ['Safari has no switch for this. Update macOS and Safari (Apple menu → System Settings → General → Software Update).',
+      'Quit Safari completely and open this page again.', 'If it still fails, use Chrome, Firefox or Edge on this computer.']]
+  };
+
+  var COMMON = ['Update your graphics drivers (Windows Update, or your graphics card’s website).',
+    'On a laptop, plug in the charger and turn off battery saver.',
+    'If it still fails, open this page in a different major browser (Chrome, Firefox, Safari or Edge).'];
+
+  // The overlay's HTML for a failed check. `browser` is a key of STEPS or 'unknown' (then: use a supported browser, no steps).
+  function messageHtml(result, browser) {
+    var why = result.reason === 'none'
+      ? 'This browser could not start WebGL (the graphics technology the game needs).'
+      : 'This browser is drawing graphics in software instead of on your graphics card, so the game would run very slowly and may fail to connect.';
+    var body;
+    if (browser === 'unknown') {
+      body = '<p>This browser is not one we support. Please open this page in <b>Chrome, Firefox, Safari or Edge</b>, then come back here.</p>';
+    } else {
+      body = '<p>To turn on hardware acceleration in <b>' + STEPS[browser][0] + '</b>:</p><ol>' +
+        STEPS[browser][1].map(function (s) { return '<li>' + s + '</li>'; }).join('') + '</ol>' +
+        '<p>Then reload this page.</p>' +
+        '<p class="gpu-more">Still stuck?</p><ul>' + COMMON.map(function (s) { return '<li>' + s + '</li>'; }).join('') + '</ul>';
+    }
+    return '<h1>Hardware acceleration is required</h1><p>' + why + '</p>' + body +
+      '<p><button id="gpu-recheck">Check again</button></p>';
+  }
+
+  var api = { check: check, browserOf: browserOf, messageHtml: messageHtml, SOFTWARE: SOFTWARE };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.GpuCheck = api;
+
+  // In the page: run now. `window.gpuCheckPassed` tells the loader whether to start Unity (the patch script reads it).
+  if (typeof document !== 'undefined' && root === window) {
+    var result = check(document);
+    window.gpuCheckResult = result;
+    window.gpuCheckPassed = result.ok;
+    if (!result.ok) {
+      var browser = browserOf(navigator.userAgent, !!(navigator.brave));
+      var box = document.createElement('div');
+      box.id = 'gpu-gate';
+      box.innerHTML = '<div class="gpu-card">' + messageHtml(result, browser) + '</div>';
+      var show = function () {
+        document.body.appendChild(box);
+        document.getElementById('gpu-recheck').onclick = function () { location.reload(); };
+      };
+      if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+    }
+  }
+})(typeof window !== 'undefined' ? window : globalThis);
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000 }
+    #unity-container.unity-desktop { position: fixed !important; left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; display: flex; align-items: center; justify-content: center }
+    #unity-canvas { display: block; flex: none; width: min(100vw, calc(100vh * 1920 / 1080)) !important; height: min(100vh, calc(100vw * 1080 / 1920)) !important; background: #000 }
+    #unity-canvas { outline: none !important; -webkit-tap-highlight-color: transparent }
+    html, body, #unity-container { -webkit-user-select: none; user-select: none }
+    #unity-footer { display: none }
+    #gpu-gate { position: fixed; inset: 0; z-index: 100; background: #14161c; color: #e8e8ee; overflow: auto; font: 18px/1.5 system-ui, sans-serif; display: flex; align-items: center; justify-content: center; -webkit-user-select: text; user-select: text }
+    #gpu-gate .gpu-card { max-width: 640px; padding: 32px }
+    #gpu-gate h1 { font-size: 28px; margin: 0 0 16px }
+    #gpu-gate li { margin: 6px 0 }
+    #gpu-gate .gpu-more { color: #aab; margin-bottom: 0 }
+    #gpu-gate button { font: inherit; padding: 8px 20px; cursor: pointer }
+  </style>
+</head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width=1920 height=1080 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"> </div>
+      <div id="unity-footer">
+        <div id="unity-logo-title-footer"></div>
+        <div id="unity-fullscreen-button"></div>
+        <div id="unity-build-title">foraging</div>
+      </div>
+    </div>
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+
+      // Shows a temporary message banner/ribbon for a few seconds, or
+      // a permanent error message on top of the canvas if type=='error'.
+      // If type=='warning', a yellow highlight color is used.
+      // Modify or remove this function to customize the visually presented
+      // way that non-critical warnings and error messages are presented to the
+      // user.
+      function unityShowBanner(msg, type) {
+        var warningBanner = document.querySelector("#unity-warning");
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/web-dev.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/web-dev.data",
+        frameworkUrl: buildUrl + "/web-dev.framework.js",
+        codeUrl: buildUrl + "/web-dev.wasm",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "foraging",
+        productVersion: "0.1.0",
+        showBanner: unityShowBanner,
+        // errorHandler: function(err, url, line) {
+        //    alert("error " + err + " occurred at line " + line);
+        //    // Return 'true' if you handled this error and don't want Unity
+        //    // to process it further, 'false' otherwise.
+        //    return true;
+        // },
+      };
+
+      // By default, Unity keeps WebGL canvas render target size matched with
+      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
+      // Set this to false if you want to decouple this synchronization from
+      // happening inside the engine, and you would instead like to size up
+      // the canvas DOM size and WebGL render target sizes yourself.
+      config.matchWebGLToCanvasSize = false;   // the render target stays the canvas's width x height attributes; CSS scales it
+
+      // If you would like all file writes inside Unity Application.persistentDataPath
+      // directory to automatically persist so that the contents are remembered when
+      // the user revisits the site the next time, uncomment the following line:
+      // config.autoSyncPersistentDataPath = true;
+      // This autosyncing is currently not the default behavior to avoid regressing
+      // existing user projects that might rely on the earlier manual
+      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
+      // expected to change.
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        // Mobile device style: fill the whole browser client area with the game canvas:
+
+        var meta = document.createElement('meta');
+        meta.name = 'viewport';
+        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+        document.getElementsByTagName('head')[0].appendChild(meta);
+        document.querySelector("#unity-container").className = "unity-mobile";
+        canvas.className = "unity-mobile";
+
+        // To lower canvas resolution on mobile devices to gain some
+        // performance, uncomment the following line:
+        // config.devicePixelRatio = 1;
+
+
+      } else {
+        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
+        // fixed 1920x1080 drawing buffer, scaled to the window by CSS (see the style block in <head>)
+      }
+
+      document.querySelector("#unity-loading-bar").style.display = "block";
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = () => {
+        createUnityInstance(canvas, config, (progress) => {
+          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
+              }).then((unityInstance) => {
+                document.querySelector("#unity-loading-bar").style.display = "none";
+                document.querySelector("#unity-fullscreen-button").onclick = () => {
+                  unityInstance.SetFullscreen(1);
+                };
+
+                var profile = unityProfiler.createButton(unityInstance);
+                profile.style.marginLeft = '5px';
+                document.querySelector("#unity-build-title").appendChild(profile);
+
+                // Unloading web content from DOM so that browser GC can run can be tricky to get right.
+                // This code snippet shows how to correctly implement a Unity content Unload mechanism to a web page.
+
+                // Unloading Unity content enables a web page to reclaim the memory used by Unity, e.g. for
+                // the purpose of later loading another Unity content instance on the _same_ web page.
+
+                // When using this functionality, take caution to carefully make sure to clear all JavaScript code,
+                // DOM element and event handler references to the old content you may have retained, or
+                // otherwise the browser's garbage collector will be unable to reclaim the old page.
+
+                // N.b. Unity content does _not_ need to be manually unloaded when the user is navigating away from
+                // the current page to another web page. The browser will take care to clear memory of old visited
+                // pages automatically. This functionality is only needed if you want to switch between loading
+                // multiple Unity builds on a single web page.
+                var quit = document.createElement("button");
+                quit.style = "margin-left: 5px; background-color: lightgray; border: none; padding: 5px; cursor: pointer";
+                quit.innerHTML = "Unload";
+                document.querySelector("#unity-build-title").appendChild(quit);
+                quit.onclick = () => {
+                  // Quit Unity application execution
+                  unityInstance.Quit().then(() => {
+                    unityProfiler.shutDown();
+                    // Remove DOM elements from the page so GC can run
+                    document.querySelector("#unity-container").remove();
+                    canvas = null;
+                    // Remover script elements from the page so GC can run
+                    script.remove();
+                    script = null;
+                  });
+                };
+              }).catch((message) => {
+                alert(message);
+              });
+            };
+
+      if (window.gpuCheckPassed) document.body.appendChild(script);
+
+    </script>
+  </body>
+</html>
